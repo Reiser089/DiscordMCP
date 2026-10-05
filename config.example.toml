@@ -1,0 +1,5 @@
+# Copy this file to "config.toml" next to discord-mcp.exe and fill in your bot token.
+token = "YOUR_BOT_TOKEN"
+
+# Optional: guild (server) used when a tool call does not pass guild_id.
+default_guild_id = ""

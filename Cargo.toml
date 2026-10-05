@@ -1,0 +1,18 @@
+[package]
+name = "discord-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight Discord MCP server built on Twilight"
+
+[dependencies]
+twilight-http = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "decompression"] }
+twilight-model = "0.17"
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "io-std", "io-util"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
