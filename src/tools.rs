@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Map, Value};
 use twilight_http::{request::channel::reaction::RequestReactionType, Client, Response};
-use twilight_model::{channel::ChannelType, id::Id, util::Timestamp};
+use twilight_model::{channel::ChannelType, guild::audit_log::AuditLogEventType, id::Id, util::Timestamp};
 
 type R = Result<Value, String>;
 
@@ -20,7 +20,7 @@ const TOOLS: &[(&str, &str, &[P])] = &[
     ("list_channels", "List channels of a guild", &[G]),
     ("list_roles", "List roles of a guild", &[G]),
     ("list_members", "List guild members (needs Server Members intent enabled for the bot)", &[G, ("limit", "integer", false, "1-1000, default 100")]),
-    ("read_messages", "Read recent messages of a channel (newest first)", &[C, ("limit", "integer", false, "1-100, default 20")]),
+    ("read_messages", "Read messages of a channel (newest first); page with before", &[C, ("limit", "integer", false, "1-100, default 20"), ("before", "string", false, "Only messages older than this message ID")]),
     ("send_message", "Send a message to a channel", &[C, ("content", "string", true, "Message text"), ("reply_to", "string", false, "Message ID to reply to")]),
     ("edit_message", "Edit a message sent by the bot", &[C, M, ("content", "string", true, "New text")]),
     ("delete_message", "Delete a message", &[C, M]),
@@ -34,7 +34,8 @@ const TOOLS: &[(&str, &str, &[P])] = &[
     ("kick_member", "Kick a member", &[G, U]),
     ("ban_member", "Ban a user", &[G, U, ("delete_message_seconds", "integer", false, "Delete their messages from the last N seconds (max 604800)")]),
     ("unban_member", "Unban a user", &[G, U]),
-    ("timeout_member", "Time out a member; minutes=0 removes the timeout", &[G, U, ("minutes", "integer", true, "Duration in minutes (max 40320)")]),
+    ("get_audit_log", "Read the guild audit log (newest first, max 100 per call; page with before)", &[G, ("limit", "integer", false, "1-100, default 100"), ("before", "string", false, "Only entries older than this entry ID"), ("action_type", "integer", false, "Filter: 20 kick, 22 ban, 23 unban, 24 member update/timeout, 25 role update, 72 message delete"), ("user_id", "string", false, "Only actions by this user")]),
+    ("timeout_member","Time out a member; minutes=0 removes the timeout", &[G, U, ("minutes", "integer", true, "Duration in minutes (max 40320)")]),
 ];
 
 pub fn list() -> Value {
@@ -113,9 +114,59 @@ fn simplify_messages(v: Value) -> Value {
                 "content": m["content"],
                 "timestamp": m["timestamp"],
                 "attachments": files,
+                "embeds": m["embeds"].as_array().map(|x| x.iter().map(embed_text).collect::<Vec<_>>()).unwrap_or_default(),
             })
         })
         .collect()
+}
+
+/// Flatten audit log entries; resolves user names and adds unix time from the snowflake.
+fn simplify_audit_log(v: Value) -> Value {
+    let names: Map<String, Value> = v["users"]
+        .as_array()
+        .map(|us| us.iter().map(|u| (u["id"].as_str().unwrap_or("").to_string(), u["username"].clone())).collect())
+        .unwrap_or_default();
+    let name = |id: &Value| id.as_str().and_then(|i| names.get(i)).cloned().unwrap_or(Value::Null);
+    v["audit_log_entries"]
+        .as_array()
+        .map(|es| {
+            es.iter()
+                .map(|e| {
+                    let ts = e["id"].as_str().and_then(|i| i.parse::<u64>().ok()).map(|i| ((i >> 22) + 1_420_070_400_000) / 1000);
+                    let changes: Vec<Value> = e["changes"].as_array().map(|c| c.iter().map(|x| x["key"].clone()).collect()).unwrap_or_default();
+                    json!({
+                        "id": e["id"],
+                        "time": ts,
+                        "action": e["action_type"],
+                        "by": name(&e["user_id"]),
+                        "by_id": e["user_id"],
+                        "target": name(&e["target_id"]),
+                        "target_id": e["target_id"],
+                        "reason": e["reason"],
+                        "changes": changes,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Flatten an embed (author, title, description, fields, footer) into one text block.
+fn embed_text(e: &Value) -> Value {
+    let mut parts = vec![];
+    for v in [&e["author"]["name"], &e["title"], &e["description"]] {
+        if let Some(s) = v.as_str() {
+            parts.push(s.to_string());
+        }
+    }
+    for f in e["fields"].as_array().into_iter().flatten() {
+        parts.push(format!("{}: {}", f["name"].as_str().unwrap_or(""), f["value"].as_str().unwrap_or("")));
+    }
+    if let Some(s) = e["footer"]["text"].as_str() {
+        parts.push(s.to_string());
+    }
+    Value::String(parts.join("
+"))
 }
 
 fn ok(_: Value) -> Value {
@@ -159,7 +210,13 @@ impl Ctx {
             }
             "read_messages" => {
                 let limit = num_arg(a, "limit").unwrap_or(20).clamp(1, 100) as u16;
-                simplify_messages(body(h.channel_messages(id(a, "channel_id")?).limit(limit).await).await?)
+                let req = h.channel_messages(id(a, "channel_id")?);
+                let res = if str_arg(a, "before").is_some() || a.get("before").is_some_and(Value::is_number) {
+                    req.before(id(a, "before")?).limit(limit).await
+                } else {
+                    req.limit(limit).await
+                };
+                simplify_messages(body(res).await?)
             }
             "send_message" => {
                 let mut req = h.create_message(id(a, "channel_id")?).content(need_str(a, "content")?);
@@ -219,6 +276,20 @@ impl Ctx {
                 ok(body(req.await).await?)
             }
             "unban_member" => ok(body(h.delete_ban(self.guild(a)?, id(a, "user_id")?).await).await?),
+            "get_audit_log" => {
+                let limit = num_arg(a, "limit").unwrap_or(100).clamp(1, 100) as u16;
+                let mut req = h.audit_log(self.guild(a)?).limit(limit);
+                if let Some(b) = num_arg(a, "before") {
+                    req = req.before(b);
+                }
+                if let Some(t) = num_arg(a, "action_type") {
+                    req = req.action_type(AuditLogEventType::from(t as u16));
+                }
+                if str_arg(a, "user_id").is_some() || a.get("user_id").is_some_and(Value::is_number) {
+                    req = req.user_id(id(a, "user_id")?);
+                }
+                simplify_audit_log(body(req.await).await?)
+            }
             "timeout_member" => {
                 let minutes = num_arg(a, "minutes").ok_or("missing argument: minutes")?.min(40_320);
                 let until = if minutes == 0 {
