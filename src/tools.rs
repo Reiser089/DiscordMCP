@@ -107,7 +107,7 @@ fn simplify_messages(v: Value) -> Value {
     a.into_iter()
         .map(|m| {
             let files: Vec<Value> = m["attachments"].as_array().map(|x| x.iter().map(|f| f["url"].clone()).collect()).unwrap_or_default();
-            json!({
+            let mut out = json!({
                 "id": m["id"],
                 "author": m["author"]["username"],
                 "author_id": m["author"]["id"],
@@ -115,7 +115,11 @@ fn simplify_messages(v: Value) -> Value {
                 "timestamp": m["timestamp"],
                 "attachments": files,
                 "embeds": m["embeds"].as_array().map(|x| x.iter().map(embed_text).collect::<Vec<_>>()).unwrap_or_default(),
-            })
+            });
+            if let Some(msg_ref) = m.get("message_reference").and_then(|r| r.get("message_id")) {
+                out.as_object_mut().unwrap().insert("reply_to".to_string(), msg_ref.clone());
+            }
+            out
         })
         .collect()
 }
