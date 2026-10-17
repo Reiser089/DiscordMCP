@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Map, Value};
 use twilight_http::{request::channel::reaction::RequestReactionType, Client, Response};
-use twilight_model::{channel::ChannelType, guild::audit_log::AuditLogEventType, id::Id, util::Timestamp};
+use twilight_model::{channel::ChannelType, guild::audit_log::AuditLogEventType, http::attachment::Attachment, id::Id, util::Timestamp};
 
 type R = Result<Value, String>;
 
@@ -21,7 +21,7 @@ const TOOLS: &[(&str, &str, &[P])] = &[
     ("list_roles", "List roles of a guild", &[G]),
     ("list_members", "List guild members (needs Server Members intent enabled for the bot)", &[G, ("limit", "integer", false, "1-1000, default 100")]),
     ("read_messages", "Read messages of a channel (newest first); page with before", &[C, ("limit", "integer", false, "1-100, default 20"), ("before", "string", false, "Only messages older than this message ID")]),
-    ("send_message", "Send a message to a channel", &[C, ("content", "string", true, "Message text"), ("reply_to", "string", false, "Message ID to reply to")]),
+    ("send_message", "Send a message to a channel", &[C, ("content", "string", false, "Message text (required unless file is set)"), ("reply_to", "string", false, "Message ID to reply to"), ("file", "string", false, "Local file path to attach")]),
     ("edit_message", "Edit a message sent by the bot", &[C, M, ("content", "string", true, "New text")]),
     ("delete_message", "Delete a message", &[C, M]),
     ("add_reaction", "React to a message with a unicode emoji", &[C, M, ("emoji", "string", true, "Unicode emoji character")]),
@@ -252,7 +252,17 @@ impl Ctx {
                 simplify_messages(body(res).await?)
             }
             "send_message" => {
-                let mut req = h.create_message(id(a, "channel_id")?).content(need_str(a, "content")?);
+                let files: Vec<Attachment> = match str_arg(a, "file") {
+                    Some(path) => {
+                        let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+                        vec![Attachment::from_bytes(name, std::fs::read(path).map_err(|e| format!("{path}: {e}"))?, 0)]
+                    }
+                    None => Vec::new(),
+                };
+                let mut req = h.create_message(id(a, "channel_id")?).attachments(&files);
+                if files.is_empty() || str_arg(a, "content").is_some() {
+                    req = req.content(need_str(a, "content")?);
+                }
                 if str_arg(a, "reply_to").is_some() {
                     req = req.reply(id(a, "reply_to")?);
                 }
