@@ -119,6 +119,13 @@ fn simplify_messages(v: Value) -> Value {
             if let Some(msg_ref) = m.get("message_reference").and_then(|r| r.get("message_id")) {
                 out.as_object_mut().unwrap().insert("reply_to".to_string(), msg_ref.clone());
             }
+            let mut parts = vec![];
+            for c in m["components"].as_array().into_iter().flatten() {
+                component_text(c, &mut parts);
+            }
+            if !parts.is_empty() {
+                out.as_object_mut().unwrap().insert("components".to_string(), Value::String(parts.join("\n")));
+            }
             out
         })
         .collect()
@@ -169,8 +176,30 @@ fn embed_text(e: &Value) -> Value {
     if let Some(s) = e["footer"]["text"].as_str() {
         parts.push(s.to_string());
     }
+    for v in [&e["image"]["url"], &e["thumbnail"]["url"]] {
+        if let Some(s) = v.as_str() {
+            parts.push(s.to_string());
+        }
+    }
     Value::String(parts.join("
 "))
+}
+
+/// Collect text and media URLs from nested message components (Components V2 layouts).
+fn component_text(c: &Value, parts: &mut Vec<String>) {
+    for v in [&c["content"], &c["media"]["url"], &c["file"]["url"]] {
+        if let Some(s) = v.as_str() {
+            parts.push(s.to_string());
+        }
+    }
+    for key in ["components", "items"] {
+        for x in c[key].as_array().into_iter().flatten() {
+            component_text(x, parts);
+        }
+    }
+    if c["accessory"].is_object() {
+        component_text(&c["accessory"], parts);
+    }
 }
 
 fn ok(_: Value) -> Value {
