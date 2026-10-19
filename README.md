@@ -27,7 +27,8 @@ A lightweight [MCP](https://modelcontextprotocol.io) server, written in Rust wit
 
 | Area | Tools |
 |---|---|
-| Info | `list_guilds`, `get_guild`, `list_channels`, `list_roles`, `list_members` |
-| Messages | `read_messages`, `send_message`, `edit_message`, `delete_message`, `add_reaction`, `pin_message` |
+| Info | `list_guilds`, `get_guild`, `list_channels`, `list_roles`, `list_members`, `get_user` |
+| Messages | `read_messages`, `get_message`, `get_mentions`, `send_message` (replies, DMs, files), `edit_message`, `delete_message`, `pin_message` |
+| Reactions | `add_reaction`, `remove_reaction`, `get_reactions` |
 | Channels | `create_channel`, `edit_channel`, `delete_channel` |
 | Moderation | `add_role`, `remove_role`, `kick_member`, `ban_member`, `unban_member`, `timeout_member` |
