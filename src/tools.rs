@@ -21,7 +21,7 @@ const TOOLS: &[(&str, &str, &[P])] = &[
     ("get_guild", "Get guild details", &[G]),
     ("list_channels", "List channels of a guild", &[G]),
     ("list_roles", "List roles of a guild", &[G]),
-    ("list_members", "List guild members (needs Server Members intent enabled for the bot)", &[G, ("limit", "integer", false, "1-1000, default 100")]),
+    ("list_members", "List guild members (needs Server Members intent enabled for the bot); members are ordered by user ID, page with after", &[G, ("limit", "integer", false, "1-1000, default 100"), ("after", "string", false, "Only members with a user ID greater than this")]),
     ("read_messages", "Read messages of a channel (newest first); page with before, poll for new ones with after", &[C, ("limit", "integer", false, "1-100, default 20"), ("before", "string", false, "Only messages older than this message ID"), ("after", "string", false, "Only messages newer than this message ID"), ("around", "string", false, "Messages around this message ID")]),
     ("get_message", "Get a single message", &[C, M]),
     ("get_mentions", "Find recent messages that mention the bot or reply to it, across the guild's text channels (newest first)", &[G, ("after", "string", false, "Only messages newer than this message ID (pass the newest id from the last call to get only new ones)"), ("per_channel", "integer", false, "Messages scanned per channel, 1-100, default 50"), ("channel_ids", "array", false, "Only scan these channel/thread IDs"), ("everyone", "boolean", false, "Also include @everyone/@here and mentions of the bot's roles")]),
@@ -397,10 +397,11 @@ impl Ctx {
             "list_roles" => pick(body(h.roles(self.guild(a)?).await).await?, &["id", "name", "color", "position", "permissions", "managed"]),
             "list_members" => {
                 let limit = num_arg(a, "limit").unwrap_or(100).clamp(1, 1000) as u16;
-                let v = body(h.guild_members(self.guild(a)?).limit(limit).await).await?;
+                let req = h.guild_members(self.guild(a)?).limit(limit);
+                let v = if has(a, "after") { body(req.after(id(a, "after")?).await).await? } else { body(req.await).await? };
                 let Value::Array(ms) = v else { return Ok(v) };
                 ms.into_iter()
-                    .map(|m| json!({ "id": m["user"]["id"], "username": m["user"]["username"], "nick": m["nick"], "roles": m["roles"], "bot": m["user"]["bot"] }))
+                    .map(|m| json!({ "id": m["user"]["id"], "username": m["user"]["username"], "nick": m["nick"], "roles": m["roles"], "bot": m["user"]["bot"], "joined_at": m["joined_at"] }))
                     .collect()
             }
             "read_messages" => {
