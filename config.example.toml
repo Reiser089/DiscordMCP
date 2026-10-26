@@ -3,3 +3,6 @@ token = "YOUR_BOT_TOKEN"
 
 # Optional: guild (server) used when a tool call does not pass guild_id.
 default_guild_id = ""
+
+# Optional: program that turns an audio URL into text (used by transcribe_audio), called as: <program> <url>
+transcribe_cmd = ""

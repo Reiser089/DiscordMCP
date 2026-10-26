@@ -3,6 +3,7 @@ use std::{env, fs, path::PathBuf};
 pub struct Config {
     pub token: String,
     pub default_guild_id: Option<u64>,
+    pub transcribe_cmd: Option<String>,
 }
 
 /// Path: $DISCORD_MCP_CONFIG, else config.toml next to the executable,
@@ -38,5 +39,6 @@ pub fn load() -> Result<Config, String> {
         .filter(|t| t != "YOUR_BOT_TOKEN")
         .ok_or_else(|| format!("no bot token set in {}", p.display()))?;
     let default_guild_id = get(&text, "default_guild_id").and_then(|g| g.parse().ok());
-    Ok(Config { token, default_guild_id })
+    let transcribe_cmd = get(&text, "transcribe_cmd");
+    Ok(Config { token, default_guild_id, transcribe_cmd })
 }

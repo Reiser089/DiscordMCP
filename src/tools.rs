@@ -24,6 +24,7 @@ const TOOLS: &[(&str, &str, &[P])] = &[
     ("list_members", "List guild members (needs Server Members intent enabled for the bot); members are ordered by user ID, page with after", &[G, ("limit", "integer", false, "1-1000, default 100"), ("after", "string", false, "Only members with a user ID greater than this")]),
     ("read_messages", "Read messages of a channel (newest first); page with before, poll for new ones with after", &[C, ("limit", "integer", false, "1-100, default 20"), ("before", "string", false, "Only messages older than this message ID"), ("after", "string", false, "Only messages newer than this message ID"), ("around", "string", false, "Messages around this message ID")]),
     ("get_message", "Get a single message", &[C, M]),
+    ("transcribe_audio", "Transcribe the audio attachment (e.g. a voice message) of a message to text; needs transcribe_cmd in config.toml", &[C, M]),
     ("get_mentions", "Find recent messages that mention the bot or reply to it, across the guild's text channels (newest first)", &[G, ("after", "string", false, "Only messages newer than this message ID (pass the newest id from the last call to get only new ones)"), ("per_channel", "integer", false, "Messages scanned per channel, 1-100, default 50"), ("channel_ids", "array", false, "Only scan these channel/thread IDs"), ("everyone", "boolean", false, "Also include @everyone/@here and mentions of the bot's roles")]),
     ("send_message", "Send a message to a channel, or a DM to a user; supports replies and file/image attachments", &[("channel_id", "string", false, "Channel ID (required unless user_id is set)"), ("user_id", "string", false, "Send as a DM to this user instead"), ("content", "string", false, "Message text (required unless files are attached)"), ("reply_to", "string", false, "Message ID to reply to"), ("ping", "boolean", false, "Ping the author of reply_to, default true"), ("file", "string", false, "Local file path to attach"), ("files", "array", false, "Local file paths to attach (max 10)")]),
     ("edit_message", "Edit a message sent by the bot", &[C, M, ("content", "string", true, "New text")]),
@@ -285,12 +286,36 @@ fn ok(_: Value) -> Value {
 pub struct Ctx {
     http: Client,
     default_guild: Option<u64>,
+    transcribe_cmd: Option<String>,
     me: OnceLock<String>,
 }
 
 impl Ctx {
     pub fn new(cfg: crate::config::Config) -> Self {
-        Self { http: Client::new(cfg.token), default_guild: cfg.default_guild_id, me: OnceLock::new() }
+        Self { http: Client::new(cfg.token), default_guild: cfg.default_guild_id, transcribe_cmd: cfg.transcribe_cmd, me: OnceLock::new() }
+    }
+
+    /// Runs `transcribe_cmd <audio url>` for the first audio attachment of a message (voice messages included)
+    /// and returns what the command prints, parsed as JSON when possible.
+    async fn transcribe(&self, a: &Value) -> R {
+        let cmd = self.transcribe_cmd.clone().ok_or("no transcribe_cmd set in config.toml")?;
+        let m = body(self.http.message(id(a, "channel_id")?, id(a, "message_id")?).await).await?;
+        let att = m["attachments"]
+            .as_array()
+            .and_then(|l| {
+                l.iter().find(|f| {
+                    let name = f["filename"].as_str().unwrap_or("").to_lowercase();
+                    f["content_type"].as_str().is_some_and(|t| t.starts_with("audio/")) || f.get("waveform").is_some() || [".ogg", ".mp3", ".wav", ".m4a", ".opus", ".flac"].iter().any(|e| name.ends_with(e))
+                })
+            })
+            .ok_or("message has no audio attachment")?;
+        let url = att["url"].as_str().ok_or("attachment has no url")?.to_string();
+        let out = std::process::Command::new(cmd).arg(&url).output().map_err(err)?;
+        if !out.status.success() {
+            return Err(format!("transcribe_cmd failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "text": text })))
     }
 
     fn guild<T>(&self, a: &Value) -> Result<Id<T>, String> {
@@ -419,6 +444,7 @@ impl Ctx {
                 simplify_messages(body(res).await?)
             }
             "get_message" => simplify_messages(body(h.message(id(a, "channel_id")?, id(a, "message_id")?).await).await?),
+            "transcribe_audio" => self.transcribe(a).await?,
             "get_mentions" => self.mentions(a).await?,
             "get_user" => self.user(a).await?,
             "send_message" => {

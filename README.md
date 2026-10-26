@@ -28,7 +28,13 @@ A lightweight [MCP](https://modelcontextprotocol.io) server, written in Rust wit
 | Area | Tools |
 |---|---|
 | Info | `list_guilds`, `get_guild`, `list_channels`, `list_roles`, `list_members`, `get_user` |
-| Messages | `read_messages`, `get_message`, `get_mentions`, `send_message` (replies, DMs, files), `edit_message`, `delete_message`, `pin_message` |
+| Messages | `read_messages`, `get_message`, `get_mentions`, `transcribe_audio` (speech-to-text of voice messages, see below), `send_message` (replies, DMs, files), `edit_message`, `delete_message`, `pin_message` |
 | Reactions | `add_reaction`, `remove_reaction`, `get_reactions` |
 | Channels | `create_channel`, `edit_channel`, `delete_channel` |
 | Moderation | `add_role`, `remove_role`, `kick_member`, `ban_member`, `unban_member`, `timeout_member` |
+
+## Voice messages
+
+`transcribe_audio` takes a `channel_id` and `message_id`, picks the first audio attachment (voice messages included) and runs the program named by `transcribe_cmd` in `config.toml` with the attachment URL as its only argument. Whatever the program prints is returned, as JSON if it parses.
+
+`scripts/transcribe.py` is a ready-made helper built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper): `pip install faster-whisper`, then point `transcribe_cmd` at a small wrapper script that runs `python scripts/transcribe.py <url>`. The model (`WHISPER_MODEL`, default `base`) is downloaded on first use into `WHISPER_DIR`.
